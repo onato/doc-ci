@@ -42,8 +42,16 @@ jobs:
     uses: onato/doc-ci/.github/workflows/android.yml@v1
     with:
       package-name: nz.govt.doc.example
-    secrets: inherit
+    secrets:
+      UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+      UPLOAD_STORE_PASSWORD: ${{ secrets.UPLOAD_STORE_PASSWORD }}
+      UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+      UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+      PLAYSTORE_JSON_CONTENTS: ${{ secrets.PLAYSTORE_JSON_CONTENTS }}
 ```
+
+Secrets are passed by name rather than with `secrets: inherit`, so each workflow only gets what
+it needs.
 
 For a React Native app, add `android-dir: android`.
 
@@ -69,7 +77,8 @@ permissions:
 jobs:
   review:
     uses: onato/doc-ci/.github/workflows/code-review.yml@v1
-    secrets: inherit
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 ## Secrets (in each app repo)
@@ -90,6 +99,18 @@ key's certificate:
 
 ```sh
 keytool -export -rfc -keystore doc-upload-key.keystore -alias doc-key-alias -file doc-upload-key.pem
+```
+
+## Building a signed release locally
+
+Add these to `~/.gradle/gradle.properties`, or pass them with `-P`, then run
+`./gradlew bundleRelease`. Without them the release build is unsigned.
+
+```properties
+UPLOAD_STORE_FILE=/path/to/doc-upload-key.keystore
+UPLOAD_STORE_PASSWORD=...
+UPLOAD_KEY_ALIAS=doc-key-alias
+UPLOAD_KEY_PASSWORD=...
 ```
 
 ## How releases work

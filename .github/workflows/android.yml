@@ -113,7 +113,7 @@ jobs:
           HAS_SECRETS: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' && secrets.UPLOAD_STORE_PASSWORD != '' && secrets.UPLOAD_KEY_ALIAS != '' && secrets.UPLOAD_KEY_PASSWORD != '' && secrets.PLAYSTORE_JSON_CONTENTS != '' }}
         run: |
           if [ "$HAS_SECRETS" != "true" ]; then
-            echo "::error::Missing repo secrets. Call this workflow with 'secrets: inherit' and add the five secrets listed in onato/doc-ci's README."
+            echo "::error::Missing repo secrets. Add the five secrets listed in onato/doc-ci's README to this repo and pass them to the workflow."
             exit 1
           fi
 
