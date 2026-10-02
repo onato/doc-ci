@@ -1,0 +1,60 @@
+default_platform(:android)
+
+platform :android do
+  desc "Raise versionCode in version.properties to the highest version code on Play, so the next release is newer than anything there"
+  lane :sync_version_code do
+    version_code = read_version_property("versionCode").to_i
+    latest_version_code = latest_play_version_code
+
+    if latest_version_code > version_code
+      write_version_property("versionCode", latest_version_code)
+      UI.important("Play already has version code #{latest_version_code}, so versionCode was raised from #{version_code}.")
+    else
+      UI.message("versionCode #{version_code} is up to date with Play (#{latest_version_code}).")
+    end
+  end
+
+  desc "Build a release bundle and upload it to the internal track if its version code isn't on Play yet"
+  lane :deploy do
+    version_code = read_version_property("versionCode").to_i
+    latest_version_code = latest_play_version_code
+
+    if version_code > latest_version_code
+      gradle(task: "clean bundleRelease")
+      upload_to_play_store(
+        track: "internal",
+        skip_upload_metadata: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true
+      )
+    elsif ENV["NEEDS_RELEASE"] == "true"
+      # sync_version_code runs before the bump, so this only happens if Play changed during the run
+      UI.user_error!("Version code #{version_code} is not newer than #{latest_version_code} on Play. Re-run the workflow.")
+    else
+      UI.important("Version code #{version_code} is not newer than #{latest_version_code} on Play, skipping upload.")
+    end
+  end
+
+  def latest_play_version_code
+    %w[internal alpha beta production].flat_map do |track|
+      google_play_track_version_codes(track: track)
+    rescue StandardError => e
+      UI.message("Couldn't read the #{track} track: #{e.message}")
+      []
+    end.max || 0
+  end
+
+  def write_version_property(property, value)
+    lines = File.readlines("../version.properties")
+    UI.user_error!("#{property} not found in version.properties") unless lines.any? { |l| l.start_with?("#{property}=") }
+    File.write("../version.properties", lines.map { |l| l.start_with?("#{property}=") ? "#{property}=#{value}\n" : l }.join)
+  end
+
+  def read_version_property(property)
+    File.foreach("../version.properties") do |line|
+      key, value = line.strip.split("=", 2)
+      return value if key == property
+    end
+    UI.user_error!("#{property} not found in version.properties")
+  end
+end

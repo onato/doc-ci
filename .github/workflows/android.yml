@@ -1,0 +1,156 @@
+name: Android build and deploy
+
+# Reusable workflow for DOC Android apps. Every push and pull request runs the unit tests and a
+# debug build; pull requests also check commit messages. Pushes to the default branch release
+# to the Google Play internal track when there are feat/fix/perf commits (see README.md).
+
+on:
+  workflow_call:
+    inputs:
+      package-name:
+        description: Google Play package name, e.g. nz.govt.doc.batrecordertester.v2
+        required: true
+        type: string
+      android-dir:
+        description: Directory containing gradlew (e.g. "android" for React Native apps)
+        type: string
+        default: .
+      doc-ci-ref:
+        description: Ref of onato/doc-ci to load scripts from. Keep in step with the @ref used to call this workflow.
+        type: string
+        default: v1
+    secrets:
+      UPLOAD_KEYSTORE_BASE64:
+        required: false
+      UPLOAD_STORE_PASSWORD:
+        required: false
+      UPLOAD_KEY_ALIAS:
+        required: false
+      UPLOAD_KEY_PASSWORD:
+        required: false
+      PLAYSTORE_JSON_CONTENTS:
+        required: false
+
+env:
+  VERSION_FILE: ${{ inputs.android-dir }}/version.properties
+  FASTLANE_DIR: ${{ inputs.android-dir }}/fastlane
+  CHANGELOG_FILE: CHANGELOG.md
+  DOC_CI: .doc-ci
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v7
+        with:
+          repository: onato/doc-ci
+          ref: ${{ inputs.doc-ci-ref }}
+          path: .doc-ci
+
+      - name: Check commit messages
+        if: github.event_name == 'pull_request'
+        run: $DOC_CI/scripts/release/check_commits.sh "origin/$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
+      - uses: actions/setup-java@v6
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Test and build
+        working-directory: ${{ inputs.android-dir }}
+        run: ./gradlew testDebugUnitTest assembleDebug
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SUPPLY_PACKAGE_NAME: ${{ inputs.package-name }}
+      BUNDLE_GEMFILE: ${{ github.workspace }}/.doc-ci/Gemfile
+      ORG_GRADLE_PROJECT_UPLOAD_STORE_PASSWORD: ${{ secrets.UPLOAD_STORE_PASSWORD }}
+      ORG_GRADLE_PROJECT_UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+      ORG_GRADLE_PROJECT_UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v7
+        with:
+          repository: onato/doc-ci
+          ref: ${{ inputs.doc-ci-ref }}
+          path: .doc-ci
+
+      - uses: actions/setup-java@v6
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: .doc-ci
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check secrets
+        env:
+          HAS_SECRETS: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' && secrets.UPLOAD_STORE_PASSWORD != '' && secrets.UPLOAD_KEY_ALIAS != '' && secrets.UPLOAD_KEY_PASSWORD != '' && secrets.PLAYSTORE_JSON_CONTENTS != '' }}
+        run: |
+          if [ "$HAS_SECRETS" != "true" ]; then
+            echo "::error::Missing repo secrets. Call this workflow with 'secrets: inherit' and add the five secrets listed in onato/doc-ci's README."
+            exit 1
+          fi
+
+      - name: Decode signing key and Play credentials
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          PLAYSTORE_JSON_CONTENTS: ${{ secrets.PLAYSTORE_JSON_CONTENTS }}
+        run: |
+          echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "$PLAYSTORE_JSON_CONTENTS" | base64 -d > "$RUNNER_TEMP/playstore.json"
+          echo "ORG_GRADLE_PROJECT_UPLOAD_STORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+          echo "SUPPLY_JSON_KEY=$RUNNER_TEMP/playstore.json" >> "$GITHUB_ENV"
+
+      # The app repo doesn't keep a Fastfile; use the shared one
+      - name: Install shared Fastfile
+        run: |
+          mkdir -p "$FASTLANE_DIR"
+          cp "$DOC_CI/fastlane/Fastfile" "$FASTLANE_DIR/Fastfile"
+
+      - name: Sync version code with Play
+        working-directory: ${{ inputs.android-dir }}
+        run: bundle exec fastlane sync_version_code
+
+      - name: Bump version if there are releasable commits
+        id: bump
+        run: $DOC_CI/scripts/release/bump_version.sh
+
+      - name: Upload to Play internal track
+        working-directory: ${{ inputs.android-dir }}
+        env:
+          NEEDS_RELEASE: ${{ steps.bump.outputs.needs_release }}
+        run: bundle exec fastlane deploy
+
+      - name: Commit version and create GitHub release
+        if: steps.bump.outputs.needs_release == 'true'
+        run: >
+          $DOC_CI/scripts/release/finalize_release.sh
+          "${{ steps.bump.outputs.next_release }}"
+          "${{ steps.bump.outputs.notes_file }}"
+          "${{ steps.bump.outputs.play_notes_file }}"
