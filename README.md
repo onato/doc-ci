@@ -71,7 +71,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
+  issues: read
   id-token: write
 
 jobs:
@@ -153,9 +153,15 @@ If you squash-merge, the PR title becomes the commit, so it must follow the same
 ## Code reviewer
 
 `reviewer/android-reviewer.md` is a Claude Code agent for Java and Kotlin Android changes.
-The `code-review.yml` workflow runs it on every non-draft pull request and posts a summary
-comment, plus inline comments for CRITICAL and HIGH findings. Its instructions always come
-from this repo, so a pull request can't change how it is reviewed.
+The `code-review.yml` workflow runs it with Opus on every non-draft pull request and posts a
+summary comment, plus inline comments for CRITICAL and HIGH findings. Its instructions always
+come from this repo, so a pull request can't change how it is reviewed.
+
+Comments come from `claude[bot]`, so the [Claude GitHub App](https://github.com/apps/claude)
+must be installed on the app repo. The review is advisory and only reads the code: it can't
+edit, commit or push. Pull requests from forks and Dependabot are skipped because they don't
+get the repo's secrets. To skip the review on a pull request, add the `skip-claude-review`
+label before pushing.
 
 To use it locally, copy it to `~/.claude/agents/android-reviewer.md` and ask Claude Code to
 "review this branch with android-reviewer".
