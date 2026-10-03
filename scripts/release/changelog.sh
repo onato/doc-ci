@@ -17,6 +17,7 @@ to="${2:-HEAD}"
 [[ $format == markdown ]] && url=$(repo_url)
 
 breaking="" features="" fixes="" performance=""
+seen=$'\n'
 
 while read -r sha; do
   [[ -z "$sha" ]] && continue
@@ -25,6 +26,12 @@ while read -r sha; do
   type=$(commit_type "$subject")
   description=$(commit_description "$subject" || true)
   description="$(tr '[:lower:]' '[:upper:]' <<<"${description:0:1}")${description:1}"
+
+  # A follow-up commit often reuses the original subject; list each change once
+  if [[ -n "$type" && "$seen" == *$'\n'"$type:$description"$'\n'* ]]; then
+    continue
+  fi
+  seen+="$type:$description"$'\n'
 
   if [[ $format == play ]]; then
     line="- $description"
